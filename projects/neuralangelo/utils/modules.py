@@ -95,18 +95,18 @@ class NeuralSDF(torch.nn.Module):
         return points_enc
 
     def set_active_levels(self, current_iter=None):
-        add_levels = (current_iter - self.warm_up_end) // self.cfg_sdf.encoding.coarse2fine.step
-        self.add_levels = min(self.cfg_sdf.encoding.levels - self.cfg_sdf.encoding.coarse2fine.init_active_level,
-                              add_levels)
-        self.active_levels = self.cfg_sdf.encoding.coarse2fine.init_active_level + self.add_levels
+        anneal_levels = max((current_iter - self.warm_up_end) // self.cfg_sdf.encoding.coarse2fine.step, 1)
+        self.anneal_levels = min(self.cfg_sdf.encoding.levels, anneal_levels)
+        # TODO: should anneal always ahead of active by 1?
+        self.active_levels = max(self.cfg_sdf.encoding.coarse2fine.init_active_level, self.anneal_levels)
         assert self.active_levels <= self.cfg_sdf.encoding.levels
 
     def set_normal_epsilon(self):
         if self.cfg_sdf.encoding.coarse2fine.enabled:
-            epsilon_res = self.resolutions[self.active_levels - 1]
-            self.normal_eps = 1. / epsilon_res
+            epsilon_res = self.resolutions[self.anneal_levels - 1]
         else:
-            self.normal_eps = 1. / self.resolutions[-1]
+            epsilon_res = self.resolutions[-1]
+        self.normal_eps = 2. / epsilon_res  # TODO: may not need, factor of 2 as bounding region is doubled
 
     @torch.no_grad()
     def _get_coarse2fine_mask(self, points_enc, feat_dim):
