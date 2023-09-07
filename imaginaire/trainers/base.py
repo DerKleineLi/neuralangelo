@@ -1,4 +1,4 @@
-'''
+"""
 -----------------------------------------------------------------------------
 Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
 
@@ -8,7 +8,7 @@ and any modifications thereto. Any use, reproduction, disclosure or
 distribution of this software and related documentation without an express
 license agreement from NVIDIA CORPORATION is strictly prohibited.
 -----------------------------------------------------------------------------
-'''
+"""
 
 import importlib
 import json
@@ -23,14 +23,25 @@ import torch
 from torch.autograd import profiler
 from torch.cuda.amp import GradScaler, autocast
 
-from imaginaire.datasets.utils.get_dataloader import get_train_dataloader, get_val_dataloader, get_test_dataloader
+from imaginaire.datasets.utils.get_dataloader import (
+    get_train_dataloader,
+    get_val_dataloader,
+    get_test_dataloader,
+)
 from imaginaire.models.utils.init_weight import weights_init, weights_rescale
-from imaginaire.trainers.utils.get_trainer import _calculate_model_size, get_optimizer, get_scheduler, wrap_model
+from imaginaire.trainers.utils.get_trainer import (
+    _calculate_model_size,
+    get_optimizer,
+    get_scheduler,
+    wrap_model,
+)
 
 from imaginaire.utils.misc import to_cuda, requires_grad, to_cpu, Timer
 from imaginaire.utils.distributed import master_only_print as print
 from imaginaire.utils.distributed import is_master, get_rank
 from imaginaire.utils.set_random_seed import set_random_seed
+
+from projects.nerf.utils.gradient import aggregate_gradients
 
 
 class BaseTrainer(object):
@@ -43,7 +54,7 @@ class BaseTrainer(object):
 
     def __init__(self, cfg, is_inference=True, seed=0):
         super().__init__()
-        print('Setup trainer.')
+        print("Setup trainer.")
         self.cfg = cfg
         torch.cuda.set_device(cfg.local_rank)
         # Create objects for the networks, optimizers, and schedulers.
@@ -74,13 +85,13 @@ class BaseTrainer(object):
         # Initialize validation parameters.
         self.init_val_parameters()
         # AWS credentials.
-        if hasattr(cfg, 'aws_credentials_file'):
+        if hasattr(cfg, "aws_credentials_file"):
             with open(cfg.aws_credentials_file) as fin:
                 self.credentials = json.load(fin)
         else:
             self.credentials = None
-        if 'TORCH_HOME' not in os.environ:
-            os.environ['TORCH_HOME'] = os.path.join(os.environ['HOME'], ".cache")
+        if "TORCH_HOME" not in os.environ:
+            os.environ["TORCH_HOME"] = os.path.join(os.environ["HOME"], ".cache")
 
     def set_data_loader(self, cfg, split, shuffle=True, drop_last=True, seed=0):
         """Set the data loader corresponding to the indicated split.
@@ -90,9 +101,11 @@ class BaseTrainer(object):
             drop_last (bool): Whether to drop the last batch if it is not full (only applies to the training set).
             seed (int): Random seed.
         """
-        assert (split in ["train", "val", "test"])
+        assert split in ["train", "val", "test"]
         if split == "train":
-            self.train_data_loader = get_train_dataloader(cfg, shuffle=shuffle, drop_last=drop_last, seed=seed)
+            self.train_data_loader = get_train_dataloader(
+                cfg, shuffle=shuffle, drop_last=drop_last, seed=seed
+            )
         elif split == "val":
             self.eval_data_loader = get_val_dataloader(cfg, seed=seed)
         elif split == "test":
@@ -115,13 +128,15 @@ class BaseTrainer(object):
         # Construct networks
         lib_model = importlib.import_module(cfg.model.type)
         model = lib_model.Model(cfg.model, cfg.data)
-        print('model parameter count: {:,}'.format(_calculate_model_size(model)))
-        print(f'Initialize model weights using type: {cfg.trainer.init.type}, gain: {cfg.trainer.init.gain}')
-        init_bias = getattr(cfg.trainer.init, 'bias', None)
-        init_gain = cfg.trainer.init.gain or 1.
+        print("model parameter count: {:,}".format(_calculate_model_size(model)))
+        print(
+            f"Initialize model weights using type: {cfg.trainer.init.type}, gain: {cfg.trainer.init.gain}"
+        )
+        init_bias = getattr(cfg.trainer.init, "bias", None)
+        init_gain = cfg.trainer.init.gain or 1.0
         model.apply(weights_init(cfg.trainer.init.type, init_gain, init_bias))
         model.apply(weights_rescale())
-        model = model.to('cuda')
+        model = model.to("cuda")
         # Different GPU copies of the same model will receive noises initialized with different random seeds
         # (if applicable) thanks to the set_random_seed command (GPU #K has random seed = args.seed + K).
         set_random_seed(seed, by_rank=True)
@@ -139,8 +154,8 @@ class BaseTrainer(object):
         """
         optim = get_optimizer(cfg.optim, model)
         self.optim_zero_grad_kwargs = {}
-        if 'set_to_none' in inspect.signature(optim.zero_grad).parameters:
-            self.optim_zero_grad_kwargs['set_to_none'] = True
+        if "set_to_none" in inspect.signature(optim.zero_grad).parameters:
+            self.optim_zero_grad_kwargs["set_to_none"] = True
         return optim
 
     def setup_scheduler(self, cfg, optim):
@@ -169,7 +184,7 @@ class BaseTrainer(object):
     def init_amp(self):
         r"""Initialize automatic mixed precision training."""
 
-        if getattr(self.cfg.trainer, 'allow_tf32', True):
+        if getattr(self.cfg.trainer, "allow_tf32", True):
             print("Allow TensorFloat32 operations on supported devices")
             torch.backends.cudnn.allow_tf32 = True
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -181,14 +196,15 @@ class BaseTrainer(object):
             print("Using automatic mixed precision training.")
 
         # amp scaler can be used without mixed precision training
-        if hasattr(self.cfg.trainer, 'scaler_config'):
+        if hasattr(self.cfg.trainer, "scaler_config"):
             scaler_kwargs = vars(self.cfg.trainer.scaler_config)
-            scaler_kwargs['enabled'] = self.cfg.trainer.amp_config.enabled and \
-                getattr(self.cfg.trainer.scaler_config, 'enabled', True)
+            scaler_kwargs["enabled"] = self.cfg.trainer.amp_config.enabled and getattr(
+                self.cfg.trainer.scaler_config, "enabled", True
+            )
         else:
-            scaler_kwargs = vars(self.cfg.trainer.amp_config)   # backward compatibility
-            scaler_kwargs.pop('dtype', None)
-            scaler_kwargs.pop('cache_enabled', None)
+            scaler_kwargs = vars(self.cfg.trainer.amp_config)  # backward compatibility
+            scaler_kwargs.pop("dtype", None)
+            scaler_kwargs.pop("cache_enabled", None)
 
         self.scaler = GradScaler(**scaler_kwargs)
 
@@ -205,8 +221,11 @@ class BaseTrainer(object):
 
         for loss_name, loss_weight in self.weights.items():
             print("Loss {:<20} Weight {}".format(loss_name, loss_weight))
-            if loss_name in self.criteria.keys() and self.criteria[loss_name] is not None:
-                self.criteria[loss_name].to('cuda')
+            if (
+                loss_name in self.criteria.keys()
+                and self.criteria[loss_name] is not None
+            ):
+                self.criteria[loss_name].to("cuda")
 
     def init_logging_attributes(self):
         r"""Initialize logging attributes."""
@@ -225,7 +244,16 @@ class BaseTrainer(object):
         if self.cfg.metrics_epoch is None:
             self.cfg.metrics_epoch = self.cfg.checkpoint.save_epoch
 
-    def init_wandb(self, cfg, wandb_id=None, project="", run_name=None, mode="online", resume="allow", use_group=False):
+    def init_wandb(
+        self,
+        cfg,
+        wandb_id=None,
+        project="",
+        run_name=None,
+        mode="online",
+        resume="allow",
+        use_group=False,
+    ):
         r"""Initialize Weights & Biases (wandb) logger.
 
         Args:
@@ -237,7 +265,7 @@ class BaseTrainer(object):
             mode (str): online/offline/disabled
         """
         if is_master():
-            print('Initialize wandb')
+            print("Initialize wandb")
             if not wandb_id:
                 wandb_path = os.path.join(cfg.logdir, "wandb_id.txt")
                 if self.checkpointer.resume and os.path.exists(wandb_path):
@@ -255,16 +283,18 @@ class BaseTrainer(object):
             if run_name is not None:
                 name = run_name
 
-            wandb.init(id=wandb_id,
-                       project=project,
-                       config=cfg,
-                       group=group,
-                       name=name,
-                       dir=cfg.logdir,
-                       resume=resume,
-                       settings=wandb.Settings(start_method="fork"),
-                       mode=mode)
-            wandb.config.update({'dataset': cfg.data.name})
+            wandb.init(
+                id=wandb_id,
+                project=project,
+                config=cfg,
+                group=group,
+                name=name,
+                dir=cfg.logdir,
+                resume=resume,
+                settings=wandb.Settings(start_method="fork"),
+                mode=mode,
+            )
+            wandb.config.update({"dataset": cfg.data.name})
             if self.model_module is not None:
                 wandb.watch(self.model_module)
 
@@ -309,7 +339,11 @@ class BaseTrainer(object):
         if current_iteration % self.cfg.logging_iter == 0:
             avg_time = self.elapsed_iteration_time / self.cfg.logging_iter
             self.timer.time_iteration = avg_time
-            print('Iteration: {}, average iter time: {:6f}.'.format(current_iteration, avg_time))
+            print(
+                "Iteration: {}, average iter time: {:6f}.".format(
+                    current_iteration, avg_time
+                )
+            )
             self.elapsed_iteration_time = 0
 
             if self.cfg.speed_benchmark:
@@ -324,8 +358,10 @@ class BaseTrainer(object):
             self.timer.checkpoint_tic()  # reset timer
 
         # Save everything to the checkpoint.
-        if current_iteration % self.cfg.checkpoint.save_iter == 0 or \
-                current_iteration == self.cfg.max_iter:
+        if (
+            current_iteration % self.cfg.checkpoint.save_iter == 0
+            or current_iteration == self.cfg.max_iter
+        ):
             self.checkpointer.save(current_epoch, current_iteration)
 
         # Save everything to the checkpoint using the name 'latest_checkpoint.pt'.
@@ -356,7 +392,7 @@ class BaseTrainer(object):
             self.sched.step()
         elapsed_epoch_time = time.time() - self.start_epoch_time
         # Logging.
-        print('Epoch: {}, total time: {:6f}.'.format(current_epoch, elapsed_epoch_time))
+        print("Epoch: {}, total time: {:6f}.".format(current_epoch, elapsed_epoch_time))
         self.timer.time_epoch = elapsed_epoch_time
         self._end_of_epoch(data, current_epoch, current_iteration)
 
@@ -431,11 +467,13 @@ class BaseTrainer(object):
         # Compute the loss.
         self.timer._time_before_forward()
 
-        autocast_dtype = getattr(self.cfg.trainer.amp_config, 'dtype', 'float16')
-        autocast_dtype = torch.bfloat16 if autocast_dtype == 'bfloat16' else torch.float16
+        autocast_dtype = getattr(self.cfg.trainer.amp_config, "dtype", "float16")
+        autocast_dtype = (
+            torch.bfloat16 if autocast_dtype == "bfloat16" else torch.float16
+        )
         amp_kwargs = {
-            'enabled': self.cfg.trainer.amp_config.enabled,
-            'dtype': autocast_dtype
+            "enabled": self.cfg.trainer.amp_config.enabled,
+            "dtype": autocast_dtype,
         }
         with autocast(**amp_kwargs):
             total_loss = self.model_forward(data)
@@ -444,12 +482,32 @@ class BaseTrainer(object):
 
         # Backpropagate the loss.
         self.timer._time_before_backward()
+
+        # For debug
+        # print("I'm before the gradient contribution")
+        if self.cfg.optim.log_gradient_contribugion:
+            # print("I'm in the gradient contribution")
+            self.gradient_contribution = {}
+            for loss_name in self.weights:
+                if loss_name in self.losses:
+                    print(f"computing gradient contribution for {loss_name}")
+                    self.scaler.scale(self.losses[loss_name]).backward(
+                        retain_graph=True
+                    )
+                    self.gradient_contribution[loss_name] = aggregate_gradients(
+                        self.model_module
+                    )
+                    print(self.gradient_contribution[loss_name])
+                    self.optim.zero_grad(**self.optim_zero_grad_kwargs)
+
         self.scaler.scale(total_loss).backward()
 
         self._extra_step(data)
 
         # Perform an optimizer step. This enables gradient accumulation when grad_accum_iter is not 1.
-        if (self.current_iteration + 1) % self.cfg.trainer.grad_accum_iter == 0 or last_iter_in_epoch:
+        if (
+            self.current_iteration + 1
+        ) % self.cfg.trainer.grad_accum_iter == 0 or last_iter_in_epoch:
             self.timer._time_before_step()
             self.scaler.step(self.optim)
             self.scaler.update()
@@ -481,8 +539,12 @@ class BaseTrainer(object):
             profile (bool): Enable profiling.
             show_pbar (bool): Whether to show the progress bar
         """
-        start_epoch = self.checkpointer.resume_epoch or self.current_epoch  # The epoch to start with.
-        current_iteration = self.checkpointer.resume_iteration or self.current_iteration  # The starting iteration.
+        start_epoch = (
+            self.checkpointer.resume_epoch or self.current_epoch
+        )  # The epoch to start with.
+        current_iteration = (
+            self.checkpointer.resume_iteration or self.current_iteration
+        )  # The starting iteration.
 
         self.timer.checkpoint_tic()  # start timer
         self.timer.reset_timeout_counter()
@@ -491,34 +553,46 @@ class BaseTrainer(object):
                 data_loader.sampler.set_epoch(current_epoch)
             self.start_of_epoch(current_epoch)
             if show_pbar:
-                data_loader_wrapper = tqdm(data_loader, desc=f"Training epoch {current_epoch + 1}", leave=False)
+                data_loader_wrapper = tqdm(
+                    data_loader, desc=f"Training epoch {current_epoch + 1}", leave=False
+                )
             else:
                 data_loader_wrapper = data_loader
             for it, data in enumerate(data_loader_wrapper):
-                with profiler.profile(enabled=profile,
-                                      use_cuda=True,
-                                      profile_memory=True,
-                                      record_shapes=True) as prof:
+                with profiler.profile(
+                    enabled=profile,
+                    use_cuda=True,
+                    profile_memory=True,
+                    record_shapes=True,
+                ) as prof:
                     data = self.start_of_iteration(data, current_iteration)
 
-                    self.train_step(data, last_iter_in_epoch=(it == len(data_loader) - 1))
+                    self.train_step(
+                        data, last_iter_in_epoch=(it == len(data_loader) - 1)
+                    )
 
                     current_iteration += 1
                     if show_pbar:
                         data_loader_wrapper.set_postfix(iter=current_iteration)
                     if it == len(data_loader) - 1:
-                        self.end_of_iteration(data, current_epoch + 1, current_iteration)
+                        self.end_of_iteration(
+                            data, current_epoch + 1, current_iteration
+                        )
                     else:
                         self.end_of_iteration(data, current_epoch, current_iteration)
                     if current_iteration >= cfg.max_iter:
-                        print('Done with training!!!')
+                        print("Done with training!!!")
                         return
                 if profile:
-                    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+                    print(
+                        prof.key_averages().table(
+                            sort_by="cuda_time_total", row_limit=20
+                        )
+                    )
                     prof.export_chrome_trace(os.path.join(cfg.logdir, "trace.json"))
 
             self.end_of_epoch(data, current_epoch + 1, current_iteration)
-        print('Done with training!!!')
+        print("Done with training!!!")
 
     def test(self, data_loader, output_dir, inference_args, show_pbar=False):
         r"""Compute results images and save the results in the specified folder.
@@ -529,15 +603,14 @@ class BaseTrainer(object):
         pass
 
     def _get_total_loss(self):
-        r"""Return the total loss to be backpropagated.
-        """
-        total_loss = torch.tensor(0., device=torch.device('cuda'))
+        r"""Return the total loss to be backpropagated."""
+        total_loss = torch.tensor(0.0, device=torch.device("cuda"))
         # Iterates over all possible losses.
         for loss_name in self.weights:
             if loss_name in self.losses:
                 # Multiply it with the corresponding weight and add it to the total loss.
                 total_loss += self.losses[loss_name] * self.weights[loss_name]
-        self.losses['total'] = total_loss  # logging purpose
+        self.losses["total"] = total_loss  # logging purpose
         return total_loss
 
     def _detach_losses(self):
@@ -552,7 +625,6 @@ class BaseTrainer(object):
 
 
 class Checkpointer(object):
-
     def __init__(self, cfg, model, optim=None, sched=None):
         self.model = model
         self.optim = optim
@@ -572,8 +644,11 @@ class Checkpointer(object):
             current_iteration (int): Current iteration.
             latest (bool): If ``True``, save it using the name 'latest_checkpoint.pt'.
         """
-        checkpoint_file = 'latest_checkpoint.pt' if latest else \
-                          f'epoch_{current_epoch:05}_iteration_{current_iteration:09}_checkpoint.pt'
+        checkpoint_file = (
+            "latest_checkpoint.pt"
+            if latest
+            else f"epoch_{current_epoch:05}_iteration_{current_iteration:09}_checkpoint.pt"
+        )
         if is_master():
             save_dict = to_cpu(self._collect_state_dicts())
             save_dict.update(
@@ -582,7 +657,10 @@ class Checkpointer(object):
             )
             # Run the checkpoint saver in a separate thread.
             threading.Thread(
-                target=self._save_worker, daemon=False, args=(save_dict, checkpoint_file, get_rank())).start()
+                target=self._save_worker,
+                daemon=False,
+                args=(save_dict, checkpoint_file, get_rank()),
+            ).start()
         checkpoint_path = self._get_full_path(checkpoint_file)
         return checkpoint_path
 
@@ -593,7 +671,7 @@ class Checkpointer(object):
         torch.save(save_dict, checkpoint_path)
         if rank == 0:
             self.write_latest_checkpoint_file(checkpoint_file)
-        print('Saved checkpoint to {}'.format(checkpoint_path))
+        print("Saved checkpoint to {}".format(checkpoint_path))
 
     def _collect_state_dicts(self):
         r"""Collect all the state dicts from network modules to be saved."""
@@ -603,7 +681,9 @@ class Checkpointer(object):
             sched=self.sched.state_dict(),
         )
 
-    def load(self, checkpoint_path=None, resume=False, load_opt=True, load_sch=True, **kwargs):
+    def load(
+        self, checkpoint_path=None, resume=False, load_opt=True, load_sch=True, **kwargs
+    ):
         r"""Load network weights, optimizer parameters, scheduler parameters from a checkpoint.
         Args:
             checkpoint_path (str): Path to the checkpoint (local file or S3 key).
@@ -623,44 +703,52 @@ class Checkpointer(object):
         if checkpoint_path is not None:
             self._check_checkpoint_exists(checkpoint_path)
             self.checkpoint_path = checkpoint_path
-            state_dict = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
+            state_dict = torch.load(
+                checkpoint_path, map_location=lambda storage, loc: storage
+            )
             print(f"Loading checkpoint (local): {checkpoint_path}")
             # Load the state dicts.
-            print('- Loading the model...')
-            self.model.load_state_dict(state_dict['model'], strict=self.strict_resume)
+            print("- Loading the model...")
+            self.model.load_state_dict(state_dict["model"], strict=self.strict_resume)
             if resume:
-                self.resume_epoch = state_dict['epoch']
-                self.resume_iteration = state_dict['iteration']
-                self.sched.last_epoch = self.resume_iteration if self.iteration_mode else self.resume_epoch
+                self.resume_epoch = state_dict["epoch"]
+                self.resume_iteration = state_dict["iteration"]
+                self.sched.last_epoch = (
+                    self.resume_iteration if self.iteration_mode else self.resume_epoch
+                )
                 if load_opt:
-                    print('- Loading the optimizer...')
-                    self.optim.load_state_dict(state_dict['optim'])
+                    print("- Loading the optimizer...")
+                    self.optim.load_state_dict(state_dict["optim"])
                 if load_sch:
-                    print('- Loading the scheduler...')
-                    self.sched.load_state_dict(state_dict['sched'])
-                print(f"Done with loading the checkpoint (epoch {self.resume_epoch}, iter {self.resume_iteration}).")
+                    print("- Loading the scheduler...")
+                    self.sched.load_state_dict(state_dict["sched"])
+                print(
+                    f"Done with loading the checkpoint (epoch {self.resume_epoch}, iter {self.resume_iteration})."
+                )
             else:
-                print('Done with loading the checkpoint.')
-            self.eval_epoch = state_dict['epoch']
-            self.eval_iteration = state_dict['iteration']
+                print("Done with loading the checkpoint.")
+            self.eval_epoch = state_dict["epoch"]
+            self.eval_iteration = state_dict["iteration"]
         else:
             # Checkpoint not found and not specified. We will train everything from scratch.
-            print('Training from scratch.')
+            print("Training from scratch.")
         torch.cuda.empty_cache()
 
     def _get_full_path(self, file):
         return os.path.join(self.logdir, file)
 
     def _get_latest_pointer_path(self):
-        return self._get_full_path('latest_checkpoint.txt')
+        return self._get_full_path("latest_checkpoint.txt")
 
     def read_latest_checkpoint_file(self):
         checkpoint_file = None
         latest_path = self._get_latest_pointer_path()
         if os.path.exists(latest_path):
             checkpoint_file = open(latest_path).read().strip()
-            if checkpoint_file.startswith("latest_checkpoint:"):  # TODO: for backward compatibility, to be removed
-                checkpoint_file = checkpoint_file.split(' ')[-1]
+            if checkpoint_file.startswith(
+                "latest_checkpoint:"
+            ):  # TODO: for backward compatibility, to be removed
+                checkpoint_file = checkpoint_file.split(" ")[-1]
         return checkpoint_file
 
     def write_latest_checkpoint_file(self, checkpoint_file):
@@ -671,7 +759,7 @@ class Checkpointer(object):
 
     def _check_checkpoint_exists(self, checkpoint_path):
         if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f'File not found (local): {checkpoint_path}')
+            raise FileNotFoundError(f"File not found (local): {checkpoint_path}")
 
     def reached_checkpointing_period(self, timer):
         save_now = torch.cuda.BoolTensor([False])
@@ -680,5 +768,5 @@ class Checkpointer(object):
                 save_now.fill_(True)
         if save_now:
             if is_master():
-                print('checkpointing period!')
+                print("checkpointing period!")
         return save_now
