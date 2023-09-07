@@ -484,21 +484,18 @@ class BaseTrainer(object):
         self.timer._time_before_backward()
 
         # For debug
-        # print("I'm before the gradient contribution")
+
         if self.cfg.optim.log_gradient_contribugion:
-            # print("I'm in the gradient contribution")
             self.gradient_contribution = {}
             for loss_name in self.weights:
                 if loss_name in self.losses:
-                    print(f"computing gradient contribution for {loss_name}")
-                    self.scaler.scale(self.losses[loss_name]).backward(
-                        retain_graph=True
+                    grad = torch.autograd.grad(
+                        self.losses[loss_name],
+                        self.model_module.parameters(),
+                        retain_graph=True,
+                        allow_unused=True,
                     )
-                    self.gradient_contribution[loss_name] = aggregate_gradients(
-                        self.model_module
-                    )
-                    print(self.gradient_contribution[loss_name])
-                    self.optim.zero_grad(**self.optim_zero_grad_kwargs)
+                    self.gradient_contribution[loss_name] = aggregate_gradients(grad)
 
         self.scaler.scale(total_loss).backward()
 
