@@ -496,6 +496,9 @@ class BaseTrainer(object):
                         allow_unused=True,
                     )
                     self.gradient_contribution[loss_name] = aggregate_gradients(grad)
+            self.gradient_contribution["weight_decay"] = aggregate_gradients(
+                self.model_module.parameters()
+            )
 
         self.scaler.scale(total_loss).backward()
 
