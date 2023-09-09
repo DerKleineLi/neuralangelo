@@ -27,7 +27,8 @@ class Trainer(BaseTrainer):
         self.warm_up_end = cfg.optim.sched.warm_up_end
         self.cfg_gradient = cfg.model.object.sdf.gradient
         if (
-            cfg.model.object.sdf.encoding.type == "hashgrid"
+            True
+            or cfg.model.object.sdf.encoding.type == "hashgrid"
             and cfg.model.object.sdf.encoding.coarse2fine.enabled
         ):
             self.c2f_step = cfg.model.object.sdf.encoding.coarse2fine.step
