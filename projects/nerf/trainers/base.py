@@ -1,4 +1,4 @@
-'''
+"""
 -----------------------------------------------------------------------------
 Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
 
@@ -8,7 +8,7 @@ and any modifications thereto. Any use, reproduction, disclosure or
 distribution of this software and related documentation without an express
 license agreement from NVIDIA CORPORATION is strictly prohibited.
 -----------------------------------------------------------------------------
-'''
+"""
 
 import torch
 import wandb
@@ -16,7 +16,11 @@ from imaginaire.trainers.base import BaseTrainer
 from imaginaire.utils.distributed import is_master, master_only
 from tqdm import tqdm
 
-from projects.nerf.utils.misc import collate_test_data_batches, get_unique_test_data, trim_test_samples
+from projects.nerf.utils.misc import (
+    collate_test_data_batches,
+    get_unique_test_data,
+    trim_test_samples,
+)
 
 
 class BaseTrainer(BaseTrainer):
@@ -35,13 +39,22 @@ class BaseTrainer(BaseTrainer):
 
     def init_losses(self, cfg):
         super().init_losses(cfg)
-        self.weights = {key: value for key, value in cfg.trainer.loss_weight.items() if value}
+        self.weights = {
+            key: value for key, value in cfg.trainer.loss_weight.items() if value
+        }
+
+    def _start_of_iteration(self, data, current_iteration):
+        data = super()._start_of_iteration(data, current_iteration)
+        self.is_log_scalar = current_iteration % self.cfg.wandb_scalar_iter == 0
+        return data
 
     def _end_of_iteration(self, data, current_epoch, current_iteration):
         # Log to wandb.
         if current_iteration % self.cfg.wandb_scalar_iter == 0:
             # Compute the elapsed time (as in the original base trainer).
-            self.timer.time_iteration = self.elapsed_iteration_time / self.cfg.wandb_scalar_iter
+            self.timer.time_iteration = (
+                self.elapsed_iteration_time / self.cfg.wandb_scalar_iter
+            )
             self.elapsed_iteration_time = 0
             # Log scalars.
             self.log_wandb_scalars(data, mode="train")
@@ -60,7 +73,9 @@ class BaseTrainer(BaseTrainer):
             # Log the results to W&B.
             if is_master():
                 self.log_wandb_scalars(data_all, mode="val")
-                self.log_wandb_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+                self.log_wandb_images(
+                    data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples
+                )
 
     def _end_of_epoch(self, data, current_epoch, current_iteration):
         # Run validation on val set.
@@ -69,7 +84,9 @@ class BaseTrainer(BaseTrainer):
             # Log the results to W&B.
             if is_master():
                 self.log_wandb_scalars(data_all, mode="val")
-                self.log_wandb_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+                self.log_wandb_images(
+                    data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples
+                )
 
     @master_only
     def log_wandb_scalars(self, data, mode=None):
@@ -79,7 +96,9 @@ class BaseTrainer(BaseTrainer):
             scalars.update({"optim/lr": self.sched.get_last_lr()[0]})
             scalars.update({"time/iteration": self.timer.time_iteration})
             scalars.update({"time/epoch": self.timer.time_epoch})
-        scalars.update({f"{mode}/loss/{key}": value for key, value in self.losses.items()})
+        scalars.update(
+            {f"{mode}/loss/{key}": value for key, value in self.losses.items()}
+        )
         scalars.update(iteration=self.current_iteration, epoch=self.current_epoch)
         wandb.log(scalars, step=self.current_iteration)
 
@@ -89,7 +108,9 @@ class BaseTrainer(BaseTrainer):
 
     def model_forward(self, data):
         # Model forward.
-        output = self.model(data)  # data = self.model(data) will not return the same data in the case of DDP.
+        output = self.model(
+            data
+        )  # data = self.model(data) will not return the same data in the case of DDP.
         data.update(output)
         # Compute loss.
         self.timer._time_before_loss()
@@ -102,20 +123,33 @@ class BaseTrainer(BaseTrainer):
 
     def train(self, cfg, data_loader, single_gpu=False, profile=False, show_pbar=False):
         self.current_epoch = self.checkpointer.resume_epoch or self.current_epoch
-        self.current_iteration = self.checkpointer.resume_iteration or self.current_iteration
-        if ((self.current_epoch % self.cfg.validation_epoch == 0 or
-             self.current_iteration % self.cfg.validation_iter == 0)):
+        self.current_iteration = (
+            self.checkpointer.resume_iteration or self.current_iteration
+        )
+        if (
+            self.current_epoch % self.cfg.validation_epoch == 0
+            or self.current_iteration % self.cfg.validation_iter == 0
+        ):
             # Do an initial validation.
             data_all = self.test(self.eval_data_loader, mode="val", show_pbar=show_pbar)
             # Log the results to W&B.
             if is_master():
                 self.log_wandb_scalars(data_all, mode="val")
-                self.log_wandb_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+                self.log_wandb_images(
+                    data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples
+                )
         # Train.
         super().train(cfg, data_loader, single_gpu, profile, show_pbar)
 
     @torch.no_grad()
-    def test(self, data_loader, output_dir=None, inference_args=None, mode="test", show_pbar=False):
+    def test(
+        self,
+        data_loader,
+        output_dir=None,
+        inference_args=None,
+        mode="test",
+        show_pbar=False,
+    ):
         """The evaluation/inference engine.
         Args:
             data_loader: The data loader.
@@ -134,7 +168,9 @@ class BaseTrainer(BaseTrainer):
             data_loader = tqdm(data_loader, desc="Evaluating", leave=False)
         data_batches = []
         for it, data in enumerate(data_loader):
-            data = self.start_of_iteration(data, current_iteration=self.current_iteration)
+            data = self.start_of_iteration(
+                data, current_iteration=self.current_iteration
+            )
             output = model.inference(data)
             data.update(output)
             data_batches.append(data)

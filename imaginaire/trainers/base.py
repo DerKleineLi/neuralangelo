@@ -421,6 +421,7 @@ class BaseTrainer(object):
             (dict): Data used for the current iteration. They might be
                 processed by the custom _start_of_iteration function.
         """
+        self.is_log_scalar = False
         return data
 
     def _end_of_iteration(self, data, current_epoch, current_iteration):
@@ -484,20 +485,20 @@ class BaseTrainer(object):
         self.timer._time_before_backward()
 
         # For debug
-
-        if self.cfg.optim.log_gradient_contribugion:
+        if self.cfg.optim.log_gradient_contribugion and self.is_log_scalar:
             self.gradient_contribution = {}
             for loss_name in self.weights:
                 if loss_name in self.losses:
                     grad = torch.autograd.grad(
-                        self.losses[loss_name],
+                        self.losses[loss_name] * self.weights[loss_name],
                         self.model_module.parameters(),
                         retain_graph=True,
                         allow_unused=True,
                     )
                     self.gradient_contribution[loss_name] = aggregate_gradients(grad)
-            self.gradient_contribution["weight_decay"] = aggregate_gradients(
-                self.model_module.parameters()
+            self.gradient_contribution["weight_decay"] = (
+                aggregate_gradients(self.model_module.parameters())
+                * self.cfg.optim.params.weight_decay
             )
 
         self.scaler.scale(total_loss).backward()
