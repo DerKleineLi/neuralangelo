@@ -63,6 +63,7 @@ model:
                     enabled: True
                     init_active_level: 4
                     step: 5000
+                    smooth_sched: False
             gradient:
                 mode: numerical
                 taps: 4
@@ -125,6 +126,7 @@ optim:
         warm_up_end: 5000
         two_steps: [300000,400000]
         gamma: 10.0
+    log_gradient_contribugion: False
 
 data:
     type: projects.nerf.datasets.nerf_blender
