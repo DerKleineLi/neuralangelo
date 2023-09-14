@@ -145,15 +145,24 @@ class NeuralSDF(torch.nn.Module):
         add_levels = (
             current_iter - self.warm_up_end
         ) // self.cfg_sdf.encoding.coarse2fine.step
-        self.add_levels = min(
-            self.cfg_sdf.encoding.levels
-            - self.cfg_sdf.encoding.coarse2fine.init_active_level,
-            add_levels,
-        )
-        self.active_levels = (
-            self.cfg_sdf.encoding.coarse2fine.init_active_level + self.add_levels
-        )
-        assert self.active_levels <= self.cfg_sdf.encoding.levels
+        if self.cfg_sdf.encoding.type == "hashgrid":
+            self.add_levels = min(
+                self.cfg_sdf.encoding.levels
+                - self.cfg_sdf.encoding.coarse2fine.init_active_level,
+                add_levels,
+            )
+            self.active_levels = (
+                self.cfg_sdf.encoding.coarse2fine.init_active_level + self.add_levels
+            )
+            assert self.active_levels <= self.cfg_sdf.encoding.levels
+        else:
+            self.add_levels = min(
+                16 - self.cfg_sdf.encoding.coarse2fine.init_active_level,
+                add_levels,
+            )
+            self.active_levels = (
+                self.cfg_sdf.encoding.coarse2fine.init_active_level + self.add_levels
+            )
 
     def set_normal_epsilon(self):
         if self.cfg_sdf.encoding.coarse2fine.enabled:
